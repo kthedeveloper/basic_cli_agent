@@ -2,7 +2,7 @@ import os
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -49,20 +49,33 @@ agent = create_agent(
 
 
 def chat(user_input: str) -> str:
-    result = agent.invoke(
+    final_answer = ""
+
+    for chunk in agent.stream(
         {"messages": [{"role": "user", "content": user_input}]},
         config={
             "configurable": {"thread_id": "default_cli_session"},
             "recursion_limit": 20,
         },
-    )
+        stream_mode="updates",
+    ):
+        if "model" in chunk:
+            message = chunk["model"]["messages"][-1]
 
-    final = next(
-        m for m in reversed(result["messages"])
-        if isinstance(m, AIMessage) and m.content
-    )
+            if isinstance(message, AIMessage):
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        print(f"→ tool: {tool_call['name']} {tool_call['args']}")
 
-    return final.content
+                if message.content:
+                    final_answer = message.content
+
+        if "tools" in chunk:
+            for message in chunk["tools"]["messages"]:
+                if isinstance(message, ToolMessage):
+                    print(f"← result: {message.content}")
+
+    return final_answer
 
 
 def main() -> None:

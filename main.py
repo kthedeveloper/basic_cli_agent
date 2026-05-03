@@ -1,121 +1,71 @@
-import json
+import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
 
 from tools import get_weather, list_notes, save_note
 
 load_dotenv()
 
-client = OpenAI()
+model = ChatOpenAI(
+    model=os.getenv("MODEL_NAME", "gpt-4o"),
+    temperature=0,
+)
 
-TOOLS = {
-    "get_weather": get_weather,
-    "save_note": save_note,
-    "list_notes": list_notes,
-}
-
-tool_schemas = [
-    {
-        "type": "function",
-        "name": "get_weather",
-        "description": "Get current weather in city",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "city": {"type": "string"},
-            },
-            "required": ["city"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "save_note",
-        "description": "Save note to storage",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string"},
-            },
-            "required": ["text"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "type": "function",
-        "name": "list_notes",
-        "description": "Get all notes",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
+tools = [
+    get_weather,
+    save_note,
+    list_notes,
 ]
 
-conversation = [
-    {
-        "role": "system",
-        "content": (
-            "You are a helpful console assistant. "
-            "Use tools when needed. "
-            "Do not invent tool results."
-        ),
-    }
-]
+system_prompt = """
+Ты консольный ассистент.
 
-while True:
-    user_input = input("You: ").strip()
+Ты умеешь:
+- отвечать на обычные вопросы пользователя;
+- получать погоду через инструмент get_weather;
+- сохранять заметки через инструмент save_note;
+- показывать заметки через инструмент list_notes.
 
-    if user_input.lower() in {"exit", "quit"}:
-        break
+Правила:
+- если пользователь просит сохранить заметку, используй save_note;
+- если пользователь спрашивает про сохранённые заметки, используй list_notes;
+- если пользователь спрашивает погоду, используй get_weather;
+- не выдумывай результаты инструментов;
+- отвечай кратко и по делу;
+- отвечай на русском языке.
+"""
 
-    conversation.append({
-        "role": "user",
-        "content": user_input,
-    })
+agent = create_agent(
+    model=model,
+    tools=tools,
+    system_prompt=system_prompt,
+)
+
+
+def chat(user_input: str) -> str:
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": user_input}]},
+        config={"recursion_limit": 20},
+    )
+
+    return result["messages"][-1].content
+
+
+def main() -> None:
+    print("CLI LangChain Agent. Напиши 'exit' для выхода.")
 
     while True:
-        response = client.responses.create(
-            model="gpt-5.4",
-            input=conversation,
-            tools=tool_schemas,
-        )
+        user_input = input("\nТы: ").strip()
 
-        tool_called = False
-        assistant_text = []
+        if user_input.lower() in {"exit", "quit", "выход"}:
+            print("Пока!")
+            break
 
-        for item in response.output:
-            if item.type == "message":
-                conversation.append(item)
+        answer = chat(user_input)
+        print(f"\nБот: {answer}")
 
-                for c in item.content:
-                    if c.type == "output_text":
-                        assistant_text.append(c.text)
 
-            elif item.type == "function_call":
-                tool_called = True
-
-                fn_name = item.name
-                args = json.loads(item.arguments)
-
-                if fn_name not in TOOLS:
-                    result = {"error": f"Unknown tool: {fn_name}"}
-                else:
-                    result = TOOLS[fn_name](**args)
-
-                conversation.append(item)
-                conversation.append({
-                    "type": "function_call_output",
-                    "call_id": item.call_id,
-                    "output": json.dumps(result, ensure_ascii=False),
-                })
-
-        if tool_called:
-            continue
-
-        final = "\n".join(assistant_text).strip()
-        print("Bot:", final)
-        break
+if __name__ == "__main__":
+    main()

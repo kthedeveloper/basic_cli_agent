@@ -1,82 +1,58 @@
 import json
-import os
+from pathlib import Path
 
-import requests
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+
+NOTES_FILE = Path("notes.json")
 
 
-def get_weather(city: str) -> dict:
-    geo = requests.get(
-        "https://geocoding-api.open-meteo.com/v1/search",
-        params={
-            "name": city,
-            "count": 1,
-            "language": "ru",
-            "format": "json",
-        },
-        timeout=10,
-    )
+class WeatherInput(BaseModel):
+    city: str = Field(description="Название города, например: Москва, София, Лондон")
 
-    geo.raise_for_status()
-    geo_data = geo.json()
 
-    results = geo_data.get("results", [])
+class SaveNoteInput(BaseModel):
+    text: str = Field(description="Текст заметки, который нужно сохранить")
 
-    if not results:
-        return {"error": f"Город '{city}' не найден"}
 
-    place = results[0]
-
-    lat = place["latitude"]
-    lon = place["longitude"]
-    name = place["name"]
-    country = place.get("country", "")
-
-    weather = requests.get(
-        "https://api.open-meteo.com/v1/forecast",
-        params={
-            "latitude": lat,
-            "longitude": lon,
-            "current_weather": True,
-        },
-        timeout=10,
-    )
-
-    weather.raise_for_status()
-    weather_data = weather.json()
-
-    current = weather_data["current_weather"]
-
-    return {
-        "city": name,
-        "country": country,
-        "temperature": current["temperature"],
-        "windspeed": current["windspeed"],
-        "weathercode": current["weathercode"],
+@tool(args_schema=WeatherInput)
+def get_weather(city: str) -> str:
+    """Возвращает текущую погоду в указанном городе."""
+    weather_data = {
+        "москва": "Облачно, +5°C",
+        "софия": "Солнечно, +18°C",
+        "лондон": "Дождь, +8°C",
     }
+    return weather_data.get(city.lower(), f"Данных о погоде для города '{city}' нет.")
 
-def save_note(text: str) -> dict:
-    path = "notes.json"
 
+@tool(args_schema=SaveNoteInput)
+def save_note(text: str) -> str:
+    """Сохраняет текстовую заметку пользователя в локальный JSON-файл."""
     notes = []
 
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            notes = json.load(f)
+    if NOTES_FILE.exists():
+        with NOTES_FILE.open("r", encoding="utf-8") as file:
+            notes = json.load(file)
 
     notes.append(text)
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(notes, f, ensure_ascii=False, indent=2)
+    with NOTES_FILE.open("w", encoding="utf-8") as file:
+        json.dump(notes, file, ensure_ascii=False, indent=2)
 
-    return {"status": "saved", text: text}
+    return "Заметка сохранена."
 
-def list_notes() -> dict:
-    path = "notes.json"
 
-    if not os.path.exists(path):
-        return {"notes": []}
+@tool
+def list_notes() -> str:
+    """Возвращает список всех сохранённых заметок пользователя."""
+    if not NOTES_FILE.exists():
+        return "Заметок пока нет."
 
-    with open(path, "r", encoding="utf-8") as f:
-        notes = json.load(f)
+    with NOTES_FILE.open("r", encoding="utf-8") as file:
+        notes = json.load(file)
 
-    return {"notes": notes}
+    if not notes:
+        return "Заметок пока нет."
+
+    return "\n".join(f"{index}. {note}" for index, note in enumerate(notes, start=1))

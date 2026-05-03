@@ -2,7 +2,9 @@ import os
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 
 from tools import get_weather, list_notes, save_note
 
@@ -12,6 +14,7 @@ model = ChatOpenAI(
     model=os.getenv("MODEL_NAME", "gpt-4o"),
     temperature=0,
 )
+memory = MemorySaver()
 
 tools = [
     get_weather,
@@ -41,16 +44,25 @@ agent = create_agent(
     model=model,
     tools=tools,
     system_prompt=system_prompt,
+    checkpointer=memory,
 )
 
 
 def chat(user_input: str) -> str:
     result = agent.invoke(
         {"messages": [{"role": "user", "content": user_input}]},
-        config={"recursion_limit": 20},
+        config={
+            "configurable": {"thread_id": "default_cli_session"},
+            "recursion_limit": 20,
+        },
     )
 
-    return result["messages"][-1].content
+    final = next(
+        m for m in reversed(result["messages"])
+        if isinstance(m, AIMessage) and m.content
+    )
+
+    return final.content
 
 
 def main() -> None:
